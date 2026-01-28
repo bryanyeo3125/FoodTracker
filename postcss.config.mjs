@@ -4,5 +4,3 @@ export default {
     autoprefixer: {},
   },
 };
-
-export default config;
