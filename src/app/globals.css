@@ -1,3 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 @import "../../node_modules/tailwindcss/dist/lib.d.mts";
 
 :root {
