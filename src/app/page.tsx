@@ -65,21 +65,33 @@ function TodaySummary({
 }
 
 export default function Home() {
-    const tg = typeof window !== "undefined" ? window.Telegram?.WebApp : undefined;
-    const tgUser = tg?.initDataUnsafe?.user;
+    // Hard SSR/edge guard (prevents weird server evaluation issues)
+    if (typeof window === "undefined") return null;
 
-    const isTelegram = !!tgUser;
+    const [tgUser, setTgUser] = useState<any>(null);
 
     const [userId, setUserId] = useState<string | null>(null);
     const [proteinTarget, setProteinTarget] = useState<number>(130);
     const [kcalTarget, setKcalTarget] = useState<number>(2000);
 
-    // Init user (Telegram)
+    // Read Telegram ONLY after mount
+    useEffect(() => {
+        const tg = window.Telegram?.WebApp;
+        const user = tg?.initDataUnsafe?.user ?? null;
+
+        if (tg) {
+            tg.ready?.();
+            tg.expand?.();
+        }
+
+        setTgUser(user);
+    }, []);
+
+    const isTelegram = !!tgUser;
+
+    // Init user (Telegram) AFTER tgUser is set
     useEffect(() => {
         if (!tgUser) return;
-
-        tg?.ready?.();
-        tg?.expand?.();
 
         fetch("/api/user/init", {
             method: "POST",
@@ -136,8 +148,12 @@ export default function Home() {
                 />
 
                 <div style={{ marginTop: 16, display: "flex", gap: 12 }}>
-                    <Link href="/log"><button>Log a meal</button></Link>
-                    <Link href="/settings"><button>Settings</button></Link>
+                    <Link href="/log">
+                        <button>Log a meal</button>
+                    </Link>
+                    <Link href="/settings">
+                        <button>Settings</button>
+                    </Link>
                 </div>
             </main>
         </UserContext.Provider>
