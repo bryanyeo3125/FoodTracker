@@ -1,62 +1,54 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+
+type TelegramUser = {
+    id: number;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+};
 
 export async function POST(req: Request) {
     try {
         const body = await req.json();
+        const tgUser = body?.telegramUser as TelegramUser | undefined;
 
-        const telegramUser = body.telegramUser;
-        if (!telegramUser?.id) {
-            return NextResponse.json({ error: "Missing Telegram user" }, { status: 400 });
+        if (!tgUser?.id) {
+            return NextResponse.json(
+                { error: "Missing telegramUser.id" },
+                { status: 400 }
+            );
         }
 
-        const telegramId = Number(telegramUser.id);
-
-        // 1) Check if user exists
-        const { data: existing, error: findErr } = await supabase
+        const { data, error } = await supabaseAdmin
             .from("users")
-            .select("id, protein_target, kcal_target")
-            .eq("telegram_id", telegramId)
-            .maybeSingle();
-
-        if (findErr) {
-            return NextResponse.json({ error: findErr.message }, { status: 500 });
-        }
-
-        if (existing) {
-            return NextResponse.json({
-                user_id: existing.id,
-                protein_target: existing.protein_target,
-                kcal_target: existing.kcal_target,
-                is_new: false,
-            });
-        }
-
-        // 2) Create user (you can omit targets if your DB has defaults; keeping explicit is fine)
-        const { data: created, error: createErr } = await supabase
-            .from("users")
-            .insert({
-                telegram_id: telegramId,
-                first_name: telegramUser.first_name ?? null,
-                last_name: telegramUser.last_name ?? null,
-                username: telegramUser.username ?? null,
-                protein_target: 130,
-                kcal_target: 2000,
-            })
+            .upsert(
+                {
+                    telegram_id: tgUser.id,
+                    first_name: tgUser.first_name ?? null,
+                    last_name: tgUser.last_name ?? null,
+                    username: tgUser.username ?? null,
+                    protein_target: 130,
+                    kcal_target: 2000,
+                },
+                { onConflict: "telegram_id" }
+            )
             .select("id, protein_target, kcal_target")
             .single();
 
-        if (createErr) {
-            return NextResponse.json({ error: createErr.message }, { status: 500 });
+        if (error) {
+            return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
         return NextResponse.json({
-            user_id: created.id,
-            protein_target: created.protein_target,
-            kcal_target: created.kcal_target,
-            is_new: true,
+            user_id: data.id,
+            protein_target: data.protein_target,
+            kcal_target: data.kcal_target,
         });
-    } catch {
-        return NextResponse.json({ error: "Bad request" }, { status: 400 });
+    } catch (e: unknown) {
+        const message =
+            e instanceof Error ? e.message : "Unknown error in /api/user/init";
+
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }

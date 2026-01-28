@@ -1,8 +1,10 @@
+// FILE: src/app/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { UserContext } from "@/app/context/UserContext";
+import TripleRings from "@/components/TripleRings";
 
 type TelegramUser = {
     id: number;
@@ -11,68 +13,9 @@ type TelegramUser = {
     username?: string;
 };
 
-function TodaySummary({
-                          userId,
-                          proteinTarget,
-                          kcalTarget,
-                      }: {
-    userId: string;
-    proteinTarget: number;
-    kcalTarget: number;
-}) {
-    const [todayProtein, setTodayProtein] = useState<number | null>(null);
-    const [todayKcal, setTodayKcal] = useState<number | null>(null);
-
-    const loading = todayProtein === null || todayKcal === null;
-
-    useEffect(() => {
-        fetch(`/api/summary/today?user_id=${encodeURIComponent(userId)}`)
-            .then((r) => r.json())
-            .then((d) => {
-                setTodayProtein(Number(d.protein ?? d.protein_g ?? 0));
-                setTodayKcal(Number(d.kcal ?? 0));
-            })
-            .catch(() => {
-                setTodayProtein(0);
-                setTodayKcal(0);
-            });
-    }, [userId]);
-
-    return (
-        <section style={{ marginTop: 16 }}>
-            <h2 style={{ margin: 0 }}>Today</h2>
-
-            {loading ? (
-                <p style={{ opacity: 0.7, marginTop: 8 }}>Loading today’s totals…</p>
-            ) : (
-                <>
-                    <p style={{ marginTop: 8 }}>
-                        Protein: <b>{todayProtein.toFixed(1)}g</b> / {proteinTarget}g
-                        <br />
-                        Calories: <b>{todayKcal.toFixed(0)}</b> / {kcalTarget} kcal
-                    </p>
-
-                    <progress
-                        value={Math.min(todayProtein, proteinTarget)}
-                        max={proteinTarget}
-                        style={{ width: "100%", height: 16 }}
-                    />
-
-                    <div style={{ height: 10 }} />
-
-                    <progress
-                        value={Math.min(todayKcal, kcalTarget)}
-                        max={kcalTarget}
-                        style={{ width: "100%", height: 16 }}
-                    />
-                </>
-            )}
-        </section>
-    );
-}
-
 export default function Home() {
-    const [mounted, setMounted] = useState(false);
+    // mount gate without setState-in-effect lint
+    const mountedRef = useRef(false);
 
     // Telegram-related state
     const [isTelegram, setIsTelegram] = useState(false);
@@ -81,12 +24,18 @@ export default function Home() {
 
     // App state
     const [userId, setUserId] = useState<string | null>(null);
+
     const [proteinTarget, setProteinTarget] = useState<number>(130);
     const [kcalTarget, setKcalTarget] = useState<number>(2000);
+    const [waterTargetMl, setWaterTargetMl] = useState<number>(2500);
 
-    // Detect Telegram only after mount (avoid SSR/hydration issues)
+    const [todayProtein, setTodayProtein] = useState<number | null>(null);
+    const [todayKcal, setTodayKcal] = useState<number | null>(null);
+    const [todayWaterMl, setTodayWaterMl] = useState<number | null>(null);
+
+    // 1) Detect Telegram after mount
     useEffect(() => {
-        setMounted(true);
+        mountedRef.current = true;
 
         const tg = window.Telegram?.WebApp;
         const inTelegram = !!tg;
@@ -97,12 +46,11 @@ export default function Home() {
         const u = (tg?.initDataUnsafe?.user ?? null) as TelegramUser | null;
         setTgUser(u);
 
-        // optional: let Telegram resize / show properly
         tg?.ready?.();
         tg?.expand?.();
     }, []);
 
-    // Only init user if we are in Telegram AND we actually have a Telegram user object
+    // 2) Init user on backend once Telegram user exists
     useEffect(() => {
         if (!isTelegram) return;
         if (!tgUser) return;
@@ -117,15 +65,41 @@ export default function Home() {
                 setUserId(data.user_id);
                 setProteinTarget(Number(data.protein_target ?? 130));
                 setKcalTarget(Number(data.kcal_target ?? 2000));
+                setWaterTargetMl(Number(data.water_target_ml ?? 2500));
             })
             .catch(() => {});
     }, [isTelegram, tgUser]);
 
-    const loading = isTelegram && tgUser && userId === null;
+    // 3) Fetch today's totals once userId exists
+    useEffect(() => {
+        if (!userId) return;
 
-    if (!mounted) return null;
+        setTodayProtein(null);
+        setTodayKcal(null);
+        setTodayWaterMl(null);
 
-    // Case 1: Not in Telegram at all
+        fetch(`/api/summary/today?user_id=${encodeURIComponent(userId)}`)
+            .then((r) => r.json())
+            .then((d) => {
+                setTodayProtein(Number(d.protein ?? d.protein_g ?? 0));
+                setTodayKcal(Number(d.kcal ?? 0));
+                setTodayWaterMl(Number(d.water_ml ?? 0));
+            })
+            .catch(() => {
+                setTodayProtein(0);
+                setTodayKcal(0);
+                setTodayWaterMl(0);
+            });
+    }, [userId]);
+
+    const loadingInit = isTelegram && tgUser && userId === null;
+    const loadingToday =
+        todayProtein === null || todayKcal === null || todayWaterMl === null;
+
+    // If not mounted yet, render nothing (avoids hydration weirdness)
+    if (!mountedRef.current) return null;
+
+    // Not in Telegram
     if (!isTelegram) {
         return (
             <main style={{ padding: 24, maxWidth: 640 }}>
@@ -138,66 +112,59 @@ export default function Home() {
         );
     }
 
-    // Case 2: In Telegram, but Telegram didn't provide user/initData (still a real case)
+    // In Telegram, but no user provided
     if (!tgUser) {
         return (
             <main style={{ padding: 24, maxWidth: 640 }}>
                 <h1>Food Tracker</h1>
-                <p>
-                    You are inside Telegram, but Telegram didn’t provide user data to the WebApp.
-                </p>
-                <p style={{ opacity: 0.8 }}>
-                    This usually happens if the Web App wasn’t launched as a proper WebApp button,
-                    or the client didn’t send init data.
-                </p>
+                <p>You’re in Telegram, but Telegram didn’t provide user data.</p>
 
                 <details style={{ marginTop: 12 }}>
                     <summary>Debug</summary>
                     <pre style={{ whiteSpace: "pre-wrap" }}>
-{JSON.stringify(
-    {
-        hasTelegramWebAppObject: isTelegram,
-        initDataLength: initDataLen,
-        initDataUnsafeUser: tgUser,
-    },
-    null,
-    2
-)}
+            {JSON.stringify(
+                {
+                    hasTelegramWebAppObject: isTelegram,
+                    initDataLength: initDataLen,
+                    initDataUnsafeUser: tgUser,
+                },
+                null,
+                2
+            )}
           </pre>
                 </details>
             </main>
         );
     }
 
-    // Case 3: Telegram user exists, but we're still waiting for your backend init
-    if (loading) {
+    // Waiting for backend init
+    if (loadingInit) {
         return <main style={{ padding: 24 }}>Loading…</main>;
     }
 
-    // If init failed for some reason
+    // Init failed
     if (!userId) {
         return (
             <main style={{ padding: 24, maxWidth: 640 }}>
                 <h1>Food Tracker</h1>
-                <p>We detected Telegram user info, but failed to initialize your user on the server.</p>
+                <p>Telegram user detected, but server init failed.</p>
                 <details style={{ marginTop: 12 }}>
                     <summary>Debug</summary>
                     <pre style={{ whiteSpace: "pre-wrap" }}>
-{JSON.stringify(
-    {
-        telegramUser: tgUser,
-        initDataLength: initDataLen,
-    },
-    null,
-    2
-)}
+            {JSON.stringify(
+                {
+                    telegramUser: tgUser,
+                    initDataLength: initDataLen,
+                },
+                null,
+                2
+            )}
           </pre>
                 </details>
             </main>
         );
     }
 
-    // Happy path
     return (
         <UserContext.Provider
             value={{
@@ -213,15 +180,23 @@ export default function Home() {
                 <h1>Food Tracker</h1>
 
                 <p>
-                    Targets: <b>{proteinTarget}g</b> protein, <b>{kcalTarget}</b> kcal
+                    Targets: <b>{proteinTarget}g</b> protein, <b>{kcalTarget}</b> kcal,{" "}
+                    <b>{waterTargetMl}ml</b> water
                 </p>
 
-                <TodaySummary
-                    key={userId}
-                    userId={userId}
-                    proteinTarget={proteinTarget}
-                    kcalTarget={kcalTarget}
-                />
+                {loadingToday ? (
+                    <p style={{ opacity: 0.7, marginTop: 12 }}>Loading today’s totals…</p>
+                ) : (
+                    <div style={{ marginTop: 12 }}>
+                        <TripleRings
+                            rings={[
+                                { label: "Protein", value: todayProtein!, target: proteinTarget },
+                                { label: "Kcal", value: todayKcal!, target: kcalTarget },
+                                { label: "Water", value: todayWaterMl!, target: waterTargetMl },
+                            ]}
+                        />
+                    </div>
+                )}
 
                 <div style={{ marginTop: 16, display: "flex", gap: 12 }}>
                     <Link href="/log">
