@@ -1,3 +1,8 @@
+export default function Page() {
+    return <div style={{ padding: 24 }}>HOME OK</div>;
+}
+
+/*
 "use client";
 
 import { useEffect, useState } from "react";
@@ -143,3 +148,4 @@ export default function Home() {
         </UserContext.Provider>
     );
 }
+*/
