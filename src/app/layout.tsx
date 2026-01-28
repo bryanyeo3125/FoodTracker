@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Script from "next/script";
 import "./globals.css";
+import { UserProvider } from "@/app/context/UserContext";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
     return (
@@ -13,7 +14,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 strategy="beforeInteractive"
             />
         </head>
-        <body>{children}</body>
+        <body>
+        <UserProvider>{children}</UserProvider>
+        </body>
         </html>
     );
 }
