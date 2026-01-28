@@ -3,8 +3,14 @@ import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { z } from "zod";
 
+export const runtime = "nodejs"; // important: OpenAI SDK expects Node runtime
+
 const RequestSchema = z.object({
     text: z.string().min(3),
+});
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
 });
 
 const systemPrompt = `
@@ -29,14 +35,13 @@ JSON format:
   "confidence": number,
   "assumptions": string
 }
-`.trim();
+`;
 
 export async function POST(req: Request) {
     // 1) Validate env
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
+    if (!process.env.OPENAI_API_KEY) {
         return NextResponse.json(
-            { error: "Missing OPENAI_API_KEY in server environment" },
+            { error: "Missing OPENAI_API_KEY on server" },
             { status: 500 }
         );
     }
@@ -68,68 +73,60 @@ ${text}
 Rules:
 - Use grams if possible (e.g. 150g chicken).
 - Use unit="serving" for things like eggs.
+- If water appears, use ml.
 - Split composite meals into components.
 - If unsure, make a reasonable assumption and explain it.
-`.trim();
-
-    // 3) Call OpenAI
-    const openai = new OpenAI({ apiKey });
+`;
 
     try {
-        const completion = await openai.chat.completions.create({
-            model: "gpt-5-mini", // model you asked for  [oai_citation:1‡OpenAI Platform](https://platform.openai.com/docs/models/gpt-5-mini?utm_source=chatgpt.com)
-            temperature: 0.2,
-            messages: [
+        const resp = await openai.responses.create({
+            model: "gpt-4.1-mini", // keep this for now; we’ll change if logs show model access issues
+            input: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: userPrompt },
             ],
+            temperature: 0.2,
+            // Enforce JSON
+            text: { format: { type: "json_object" } },
         });
 
-        const raw = completion.choices[0]?.message?.content ?? "";
+        const raw = resp.output_text?.trim() ?? "";
+        if (!raw) {
+            return NextResponse.json(
+                { error: "Empty response from model" },
+                { status: 502 }
+            );
+        }
 
-        // 4) Strict JSON parse (with a small “extract JSON” fallback)
         try {
-            return NextResponse.json(JSON.parse(raw));
+            const json = JSON.parse(raw);
+            return NextResponse.json(json);
         } catch {
-            const first = raw.indexOf("{");
-            const last = raw.lastIndexOf("}");
-            if (first !== -1 && last !== -1 && last > first) {
-                const maybe = raw.slice(first, last + 1);
-                try {
-                    return NextResponse.json(JSON.parse(maybe));
-                } catch {}
-            }
-
             return NextResponse.json(
                 { error: "Model did not return valid JSON", raw },
                 { status: 502 }
             );
         }
-    } catch (err: unknown) {
-        // 5) Return useful OpenAI error info
-        const e = err as any;
-
-        // OpenAI Node SDK typically includes these:
-        const status = e?.status ?? e?.response?.status ?? 500;
+    } catch (err: any) {
+        // This is the key part: expose the real OpenAI error in logs/response
+        const status = err?.status ?? 500;
         const message =
-            e?.message ??
-            e?.response?.data?.error?.message ??
+            err?.error?.message ??
+            err?.message ??
             "OpenAI request failed";
 
-        const code = e?.code ?? e?.response?.data?.error?.code ?? null;
-        const type = e?.type ?? e?.response?.data?.error?.type ?? null;
-
-        // Helpful to see in Vercel function logs:
         console.error("OpenAI error:", {
             status,
             message,
-            code,
-            type,
-            details: e?.response?.data ?? null,
+            name: err?.name,
+            code: err?.code,
+            type: err?.type,
+            // some SDK versions include response body here:
+            response: err?.response?.data ?? err?.response ?? null,
         });
 
         return NextResponse.json(
-            { error: "OpenAI request failed", status, message, code, type },
+            { error: "OpenAI request failed", details: message, status },
             { status: 500 }
         );
     }
