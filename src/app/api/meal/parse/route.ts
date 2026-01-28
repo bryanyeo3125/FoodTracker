@@ -22,30 +22,30 @@ export async function POST(req: Request) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
         return NextResponse.json(
-            { error: "Missing OPENAI_API_KEY on server" },
-            { status: 500 }
+            {error: "Missing OPENAI_API_KEY on server"},
+            {status: 500}
         );
     }
 
-    const openai = new OpenAI({ apiKey });
+    const openai = new OpenAI({apiKey});
 
     // 2) Parse JSON body
     let body: unknown;
     try {
         body = await req.json();
     } catch {
-        return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+        return NextResponse.json({error: "Invalid JSON body"}, {status: 400});
     }
 
     const parsedReq = RequestSchema.safeParse(body);
     if (!parsedReq.success) {
         return NextResponse.json(
-            { error: "Missing or invalid `text` field" },
-            { status: 400 }
+            {error: "Missing or invalid `text` field"},
+            {status: 400}
         );
     }
 
-    const { text } = parsedReq.data;
+    const {text} = parsedReq.data;
 
     // 3) Prompts
     const systemPrompt = `
@@ -92,10 +92,10 @@ Rules:
             model: "gpt-5-mini",
             temperature: 0.2,
             // This makes the model return valid JSON text.
-            response_format: { type: "json_object" },
+            response_format: {type: "json_object"},
             messages: [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: userPrompt },
+                {role: "system", content: systemPrompt},
+                {role: "user", content: userPrompt},
             ],
         });
 
@@ -107,14 +107,30 @@ Rules:
             return NextResponse.json(json);
         } catch {
             return NextResponse.json(
-                { error: "Model did not return valid JSON", raw },
-                { status: 502 }
+                {error: "Model did not return valid JSON", raw},
+                {status: 502}
             );
         }
     } catch (err: unknown) {
+        // Try to extract useful info from OpenAI SDK errors
+        const anyErr = err as {
+            status?: number;
+            code?: string;
+            message?: string;
+            error?: unknown;
+            response?: unknown;
+        };
+
         return NextResponse.json(
-            { error: "OpenAI request failed", details: errMessage(err) },
-            { status: 500 }
+            {
+                error: "OpenAI request failed",
+                message: anyErr?.message ?? errMessage(err),
+                status: anyErr?.status ?? null,
+                code: anyErr?.code ?? null,
+                // sometimes OpenAI SDK includes a nested error payload
+                extra: anyErr?.error ?? null,
+            },
+            {status: 500}
         );
     }
 }
